@@ -1,5 +1,7 @@
+/* 全字庫正楷體子集，tools/font_subset.py 產生；題庫加新字後要重跑 */
+@font-face{font-family:"ZBBKai";src:url(assets/kai.woff2) format("woff2");font-display:swap}
 :root{
-  --kai:"TW-MOE-Std-Kai","TW-Kai","DFKai-SB","BiauKai","BiauKaiTC","標楷體","LXGW WenKai TC","Kaiti TC","STKaiti",serif;
+  --kai:"ZBBKai","TW-Kai","DFKai-SB","BiauKai","BiauKaiTC","標楷體","Kaiti TC","STKaiti",serif;
   --sans:"Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif;
   --ink:#4a3320;--paper:#fffaf0;--line:#e9d7b8;--orange:#e87f2e;--mint:#3fa98a;--red:#d9534f;--gold:#f2b632;
 }

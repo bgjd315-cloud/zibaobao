@@ -100,8 +100,7 @@ const pc = n => (n * 100).toFixed(1) + '%';
 const setBg = n => { bg.style.backgroundImage = `url("assets/bg/${n}.webp")`; };
 
 // ---------- 拆字：在畫布上找筆畫最少的分界線，比例跟著實際字型走 ----------
-// ?font=lx 可模擬手機（沒有標楷體時）的字型
-const FONT = new URLSearchParams(location.search).get('font') === 'lx' ? '"LXGW WenKai TC",serif' : '"TW-MOE-Std-Kai","TW-Kai","DFKai-SB","BiauKai","BiauKaiTC","標楷體","LXGW WenKai TC","Kaiti TC",serif';
+const FONT = '"ZBBKai","TW-Kai","DFKai-SB","BiauKai","Kaiti TC",serif';
 const cutCache = {};
 const cv0 = document.createElement('canvas'); cv0.width = cv0.height = 100;
 const g0 = cv0.getContext('2d', { willReadFrequently: true });
@@ -715,6 +714,7 @@ function parent() {
     <div class="tablewrap"><table><tr><th>字</th><th>課</th><th>狀態</th><th>下次複習</th><th>全對</th><th>差一點</th><th>忘了</th><th>拼錯部件</th></tr>
     ${seen.map(d => { const r = S.chars[d.c]; return `<tr><td style="font-family:var(--kai);font-size:26px">${d.c}${HAND[d.c] ? '＊' : ''}</td><td>${d.lesson > 300 ? '二下' + (d.lesson - 300) : d.lesson > 200 ? '一下' + (d.lesson - 200) : d.lesson > 100 ? '一上' + (d.lesson - 100) : '二上' + d.lesson}</td><td>${name[stateOf(d.c)]}</td><td>${r.due || '—'}</td><td>${r.ok}</td><td>${r.near}</td><td>${r.forget}</td><td>${r.wrongParts}</td></tr>`; }).join('') || '<tr><td colspan="8">還沒有練習紀錄</td></tr>'}
     </table></div><p>＊是考卷錯字。</p>
+    <p style="font-size:14px;color:#7a5c3e">字型來源：數位發展部，CNS11643中文標準交換碼全字庫網站，https://www.cns11643.gov.tw（全字庫正楷體，依政府資料開放授權條款第 1 版使用，僅取遊戲用字）。</p>
     <div class="row" style="margin-top:12px"><button class="btn gray" data-go="">回遊戲</button><button class="btn red" id="rs">清除所有進度</button></div></div>`;
   bind();
   document.getElementById('fc').onchange = e => { S.focus = +e.target.value; save(); };
