@@ -1,13 +1,16 @@
-// 字寶寶樂園 試玩版
+// 字寶寶樂園：二上十二課、五項設施
 const KEY = 'zibaobao_v1';
 const INTERVAL = [0, 1, 3, 7, 14, 30];
 const app = document.getElementById('app'), bg = document.getElementById('bg');
-const byC = Object.fromEntries(CHARS.map(c => [c.c, c]));
+const byC = Object.fromEntries(BANK.map(c => [c.c, c]));
+const OPEN = LANDS.filter(l => l.unit);
 window.__miss = new Set();
+const landOf = c => OPEN.find(l => l.lessons.includes(byC[c].lesson));
 
 function load() { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; } }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
-let S = load() || { look: null, stars: 0, chars: {}, trains: {}, shifts: 0, days: [] };
+let S = load() || {};
+S = Object.assign({ look: null, stars: 0, chars: {}, trains: {}, shifts: 0, days: [], words: {}, detect: {}, focus: 0 }, S);
 const rec = c => S.chars[c] || (S.chars[c] = { box: 0, due: null, lastOk: null, combined: false, caught: false, ok: 0, near: 0, forget: 0, wrongParts: 0 });
 
 // 測試可用 ?today=2026-11-05 模擬日期
@@ -23,25 +26,28 @@ function addDays(s, n) {
 }
 
 const esc = s => s.replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
-// 把文字轉成帶注音的 ruby；blank(字, 注音) 決定 {字} 怎麼顯示
+const isHan = ch => /[一-鿿]/.test(ch);
+// 把文字轉成帶直排注音的字；字[注音] 指定讀音；blank(字, 注音) 決定 {字} 怎麼顯示
 function z(s, blank) {
   let out = '';
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (ch === '{') {
       const c = s[i + 1]; i += 2;
-      out += blank ? blank(c, ZY[c]) : rubyOf(c, ZY[c]);
+      let r = ZY[c] || ZYB[c];
+      if (s[i + 1] === '[') { const e = s.indexOf(']', i); r = s.slice(i + 2, e); i = e; }
+      out += blank ? blank(c, r) : zc(c, r);
       continue;
     }
-    if (/[一-鿿辶]/.test(ch)) {
-      let r = ZY[ch];
+    if (isHan(ch)) {
+      let r = ZY[ch] || ZYB[ch];
       if (s[i + 1] === '[') { const e = s.indexOf(']', i); r = s.slice(i + 2, e); i = e; }
-      out += rubyOf(ch, r);
+      out += zc(ch, r);
     } else out += esc(ch);
   }
   return out;
 }
-function rubyOf(c, r) {
+function zc(c, r) {
   if (!r) { window.__miss.add(c); return c; }
   return `<span class="zc">${c}${bp(r)}</span>`;
 }
@@ -93,27 +99,60 @@ const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { c
 const pc = n => (n * 100).toFixed(1) + '%';
 const setBg = n => { bg.style.backgroundImage = `url("assets/bg/${n}.webp")`; };
 
-// 字形拆半：用 clip-path 裁真正的字，字形才會和標準字一致
-function clipGiven(d) {
-  if (d.s === 'lr') return `inset(0 ${pc(1 - d.r)} 0 0)`;
-  if (d.s === 'tb') return d.give === 'T' ? `inset(0 0 ${pc(1 - d.r)} 0)` : `inset(${pc(d.r)} 0 0 0)`;
-  const [a, b, c, e] = d.box;
-  return `polygon(evenodd,0 0,100% 0,100% 100%,0 100%,0 0,${pc(a)} ${pc(b)},${pc(a)} ${pc(e)},${pc(c)} ${pc(e)},${pc(c)} ${pc(b)},${pc(a)} ${pc(b)})`;
+// ---------- 拆字：在畫布上找筆畫最少的分界線，比例跟著實際字型走 ----------
+const FONT = '"LXGW WenKai TC","DFKai-SB","BiauKai","Kaiti TC",serif';
+const cutCache = {};
+const cv0 = document.createElement('canvas'); cv0.width = cv0.height = 100;
+const g0 = cv0.getContext('2d', { willReadFrequently: true });
+function findCut(c, type) {
+  const k = c + type;
+  if (cutCache[k]) return cutCache[k];
+  g0.clearRect(0, 0, 100, 100); g0.font = '100px ' + FONT; g0.fillStyle = '#000'; g0.textBaseline = 'alphabetic';
+  const m = g0.measureText(c), asc = m.fontBoundingBoxAscent || 88, des = m.fontBoundingBoxDescent || 12;
+  g0.fillText(c, (100 - m.width) / 2, (100 + asc - des) / 2);
+  const px = g0.getImageData(0, 0, 100, 100).data, ink = new Array(100).fill(0);
+  for (let y = 0; y < 100; y++) for (let x = 0; x < 100; x++) if (px[(y * 100 + x) * 4 + 3] > 80) ink[type === 'L' ? x : y]++;
+  let best = 50, score = 1e9;
+  const from = 22, to = 75, mid = type === 'L' ? 42 : 50;
+  for (let i = from; i <= to; i++) {
+    const s = ink[i] + ink[i - 1] * .5 + ink[i + 1] * .5 + Math.abs(i - mid) * .12;
+    if (s < score) { score = s; best = i; }
+  }
+  return cutCache[k] = best / 100;
 }
-function clipOther(d, own) {
-  if (d.s === 'lr') return `inset(0 0 0 ${pc(own ?? d.r)})`;
-  if (d.s === 'tb') { const r = own ?? d.r; return d.give === 'T' ? `inset(${pc(r)} 0 0 0)` : `inset(0 0 ${pc(1 - r)} 0)`; }
-  const [a, b, c, e] = own || d.box;
-  return `inset(${pc(b)} ${pc(1 - c)} ${pc(1 - e)} ${pc(a)})`;
+const BOX = { W: [.30, 0, 1, .80], B: [.18, .20, .84, .86] };
+function giveOf(d) {
+  if (d.t === 'L') return RIGHT_RAD.includes(d.rad) ? 'R' : 'L';
+  if (d.t === 'T') return HEAD_RAD.includes(d.rad) ? 'T' : 'B';
+  return 'O';
 }
-const optOf = o => Array.isArray(o) ? o : [o, undefined];
-const glyphGiven = d => `<span class="give" style="clip-path:${clipGiven(d)}">${d.c}</span>`;
-const glyphOpt = (d, o) => { const [c, own] = optOf(o); return `<span class="put" style="clip-path:${clipOther(d, own)}">${c}</span>`; };
+function clipPart(c, t, part) {
+  if (t === 'L') { const r = findCut(c, 'L'); return part === 'L' ? `inset(0 ${pc(1 - r)} 0 0)` : `inset(0 0 0 ${pc(r)})`; }
+  if (t === 'T') { const r = findCut(c, 'T'); return part === 'T' ? `inset(0 0 ${pc(1 - r)} 0)` : `inset(${pc(r)} 0 0 0)`; }
+  const [a, b, e, f] = BOX[t];
+  if (part === 'O') return `polygon(evenodd,0 0,100% 0,100% 100%,0 100%,0 0,${pc(a)} ${pc(b)},${pc(a)} ${pc(f)},${pc(e)} ${pc(f)},${pc(e)} ${pc(b)},${pc(a)} ${pc(b)})`;
+  return `inset(${pc(b)} ${pc(1 - e)} ${pc(1 - f)} ${pc(a)})`;
+}
+const other = g => ({ L: 'R', R: 'L', T: 'B', B: 'T', O: 'I' }[g]);
+const glyphGiven = d => `<span class="give" style="clip-path:${clipPart(d.c, d.t, giveOf(d))}">${d.c}</span>`;
+const glyphOpt = (d, c) => `<span class="put" style="clip-path:${clipPart(c, d.t, other(giveOf(d)))}">${c}</span>`;
+const canCombine = d => d.t !== 'X';
+function optionsFor(d) {
+  if (HAND[d.c]) return HAND[d.c].o;
+  const same = BANK.filter(x => x.c !== d.c && x.t === d.t && giveOf(x) === giveOf(d));
+  const a = shuffle(same.filter(x => x.rad === d.rad)).slice(0, 2);
+  const b = shuffle(same.filter(x => !a.includes(x)));
+  return [d.c, ...a.concat(b).slice(0, 2).map(x => x.c)];
+}
+const tipOf = d => HAND[d.c] ? HAND[d.c].tip : `部首是「${d.rad}」。`;
+const picOf = d => (HAND[d.c] && HAND[d.c].pic) || PICS[d.c] || '';
+const picHtml = d => picOf(d) ? `<img class="pic" src="assets/cut/${picOf(d)}.webp" alt="">` : `<img class="pic" src="assets/cut/字寶寶_糖果.webp" alt="">`;
+const fontsReady = cs => Promise.all(cs.map(c => document.fonts.load('100px "LXGW WenKai TC"', c))).catch(() => {});
 
 const topbar = (back, title) => `
   <div class="top">
     <button class="btn gray" data-go="${back}">${z('回去')}</button>
-    <div class="grow"><h2 style="display:inline-block;background:rgba(255,250,240,.96);border:2px solid var(--line);border-radius:14px;padding:2px 14px">${title || ''}</h2></div>
+    <div class="grow"><h2 class="tag">${title || ''}</h2></div>
     <div class="stars"><img src="assets/cut/獎勵_金星.webp" alt="星星">${S.stars}</div>
   </div>`;
 function bind() {
@@ -126,7 +165,7 @@ const spBtn = t => `<button class="sp" aria-label="朗讀" data-say="${esc(plain
 const STORY = [
   ['呼嚕怪_搗蛋', '樂園裡的每個招牌，都是會說話的字寶寶。可是貪吃的呼嚕怪，把招牌咬成兩半了！'],
   ['半半_加油', '字寶寶找不到另一半，樂園就停電了。'],
-  ['半半_開心', '小園長，請你和半半一起，幫字寶寶找回另一半！']
+  ['半半_開心', '小園長[ㄓㄤˇ]，請你和半半一起，幫字寶寶找回另一半！']
 ];
 function home() {
   setBg('封面');
@@ -147,111 +186,137 @@ function story(i) {
 function pick() {
   setBg('封面');
   const L = [['園長_女孩', '女孩'], ['園長_男孩', '男孩'], ['園長_小狐狸', '小狐狸']];
-  app.innerHTML = `<div class="panel" style="margin-top:auto;margin-bottom:auto"><h2 class="center">${z('選一個小園長')}</h2>
+  app.innerHTML = `<div class="panel" style="margin-top:auto;margin-bottom:auto"><h2 class="center">${z('選一個小園長[ㄓㄤˇ]')}</h2>
     <div class="avatars">${L.map(([a, n]) => `<button data-a="${a}"><img src="assets/cut/${a}.webp" alt="${n}"><div style="font-size:24px">${z(n)}</div></button>`).join('')}</div></div>`;
   app.querySelectorAll('[data-a]').forEach(b => b.onclick = () => { S.look = b.dataset.a; save(); location.hash = 'map'; });
 }
 
 // ---------- 地圖、園區 ----------
+function stateOf(c) { const r = S.chars[c]; return !r || !r.combined ? 0 : r.caught ? 2 : 1; }
 function map() {
   setBg('園區_拍手草原');
+  const q = buildTask();
   app.innerHTML = `${topbar('', z('樂園地圖'))}
-    <div class="mapwrap">${LANDS.map(l => l.open
-      ? `<button class="pin open" style="left:${l.x}%;top:${l.y}%" data-go="land">${z(l.n)}</button>`
+    <div class="panel row" style="justify-content:space-between">
+      <div style="font-size:24px">${z('招牌修好了')} <b style="font-family:var(--sans)">${BANK.filter(d => stateOf(d.c) === 2).length}／${BANK.length}</b></div>
+      ${q.length ? `<button class="btn" id="task" style="font-size:28px">${z('今日任務')}</button>` : `<div style="font-size:24px">${z('今日任務做完了，太棒了！')}</div>`}
+    </div>
+    <div class="mapwrap">${LANDS.map(l => l.unit
+      ? `<button class="pin open" style="left:${l.x}%;top:${l.y}%" data-go="land/${l.unit}">${z(l.n)}</button>`
       : `<div class="pin lock" style="left:${l.x}%;top:${l.y}%">🔒${z(l.n)}</div>`).join('')}</div>`;
   bind();
+  if (q.length) document.getElementById('task').onclick = () => { flow = { q, i: 0, task: true, back: 'map' }; nextStep(); };
 }
-function stateOf(c) { const r = S.chars[c]; return !r || !r.combined ? 0 : r.caught ? 2 : 1; }
-function signs() {
-  return CHARS.map(d => {
+function signs(list) {
+  return list.map(d => {
     const st = stateOf(d.c);
-    return `<button class="sign s${st}" aria-label="${d.c}" data-say="${d.c}"><span class="g">${st ? `<span>${d.c}</span>` : `<span style="clip-path:${clipGiven(d)}">${d.c}</span>`}</span></button>`;
+    return `<button class="sign s${st}" aria-label="${d.c}" data-say="${d.c}"><span class="g">${st || !canCombine(d) ? `<span>${d.c}</span>` : `<span style="clip-path:${clipPart(d.c, d.t, giveOf(d))}">${d.c}</span>`}</span></button>`;
   }).join('');
 }
-function land() {
-  setBg('園區_新鮮事市集');
-  const caught = CHARS.filter(d => stateOf(d.c) === 2).length;
-  const q = buildTask();
-  app.innerHTML = `${topbar('map', z('新鮮事市集'))}
-    <div class="panel">
-      <div class="row" style="justify-content:space-between">
-        <div class="story"><img src="assets/cut/${S.look || '園長_女孩'}.webp" alt="" style="width:76px"><div style="font-size:24px;line-height:2">${z('招牌修好了')} <b style="font-family:var(--sans)">${caught}／${CHARS.length}</b></div></div>
-        ${q.length ? `<button class="btn" id="task" style="font-size:30px">${z('今日任務')}</button>` : `<div style="font-size:24px;line-height:2">${z('今日任務做完了，太棒了！')}</div>`}
-      </div>
-      <div class="signs">${signs()}</div>
-    </div>
-    <div class="panel"><div class="grid3">
-      <button class="fac" data-go="combine"><img src="assets/bg/設施_合體工坊.webp" alt="">${z('合體工坊')}</button>
-      <button class="fac" data-go="board"><img src="assets/bg/設施_魔法黑板.webp" alt="">${z('魔法黑板')}</button>
-      <button class="fac" data-go="train"><img src="assets/bg/設施_對號小火車.webp" alt="">${z('對號小火車')}</button>
-    </div></div>`;
+const chipTitle = (n, t) => `第${n}課`;
+function land(u) {
+  const L = OPEN.find(l => l.unit === u);
+  setBg(L.img);
+  const list = BANK.filter(d => L.lessons.includes(d.lesson));
+  const groups = L.lessons.map(n => {
+    const ls = list.filter(d => d.lesson === n);
+    const done = ls.filter(d => stateOf(d.c) === 2).length;
+    return `<div class="group"><div class="ghead">${z(ls[0].title)} <small>${done}／${ls.length}</small></div><div class="signs">${signs(ls)}</div></div>`;
+  }).join('');
+  app.innerHTML = `${topbar('map', z(L.n))}
+    <div class="panel"><div class="grid5">
+      <button class="fac" data-go="combine/${u}"><img src="assets/bg/設施_合體工坊.webp" alt="">${z('合體工坊')}</button>
+      <button class="fac" data-go="board/${u}"><img src="assets/bg/設施_魔法黑板.webp" alt="">${z('魔法黑板')}</button>
+      <button class="fac" data-go="wheel/${u}"><img src="assets/bg/設施_詞語摩天輪.webp" alt="">${z('詞語摩天輪')}</button>
+      <button class="fac" data-go="train/${u}"><img src="assets/bg/設施_對號小火車.webp" alt="">${z('對號小火車')}</button>
+      <button class="fac" data-go="detect/${u}"><img src="assets/bg/設施_偵探小屋.webp" alt="">${z('偵探小屋')}</button>
+    </div></div>
+    <div class="panel">${groups}</div>
+    <div class="row"><button class="btn gray" data-go="dict">${z('詞語寶典')}</button></div>`;
   bind();
-  if (q.length) document.getElementById('task').onclick = () => { flow = { q, i: 0, task: true }; nextStep(); };
 }
 
 // ---------- 今日任務與自由練習的流程 ----------
 let flow = null;
+// 順序：考卷錯字 → 家長設定的目前課次 → 二上其他課
+function freshOrder() {
+  const score = d => (HAND[d.c] ? 0 : d.lesson === S.focus ? 1 : 2);
+  return BANK.slice().sort((a, b) => score(a) - score(b) || a.lesson - b.lesson);
+}
 function buildTask() {
   const t = today(), q = [];
-  const seen = CHARS.filter(d => S.chars[d.c] && S.chars[d.c].combined);
-  seen.filter(d => S.chars[d.c].due && S.chars[d.c].due <= t).forEach(d => q.push({ t: 'board', c: d.c }));
-  const fresh = CHARS.filter(d => !(S.chars[d.c] && S.chars[d.c].combined)).slice(0, 5);
-  fresh.forEach(d => { q.push({ t: 'combine', c: d.c }); q.push({ t: 'board', c: d.c }); });
-  if (q.length) q.push({ t: 'train' });
+  BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined && S.chars[d.c].due && S.chars[d.c].due <= t).forEach(d => q.push({ t: 'board', c: d.c }));
+  const fresh = freshOrder().filter(d => !(S.chars[d.c] && S.chars[d.c].combined)).slice(0, 5);
+  fresh.forEach(d => { if (canCombine(d)) q.push({ t: 'combine', c: d.c }); q.push({ t: 'board', c: d.c }); });
+  if (q.length) {
+    const u = landOf(fresh[0] ? fresh[0].c : q[0].c).unit;
+    q.push({ t: 'wheel', u, c: fresh[0] ? fresh[0].c : q[0].c });
+    q.push({ t: 'train', u });
+    q.push({ t: 'detect', u, one: true });
+  }
   return q;
 }
 function nextStep() {
   if (!flow || flow.i >= flow.q.length) {
-    const wasTask = flow && flow.task;
+    const f = flow;
     flow = null;
-    if (wasTask) { const t = today(); if (!S.days.includes(t)) S.days.push(t); save(); return finish(); }
-    location.hash = 'land'; route(); return;
+    if (f && f.task) { const t = today(); if (!S.days.includes(t)) S.days.push(t); save(); return finish(); }
+    location.hash = f && f.back || 'map'; return;
   }
   const s = flow.q[flow.i++];
   if (s.t === 'combine') combine(s.c);
   else if (s.t === 'board') board(s.c);
-  else train();
+  else if (s.t === 'wheel') wheel(s.u, s.c);
+  else if (s.t === 'train') train(s.u);
+  else detect(s.u, s.one);
 }
+const backOf = () => flow && flow.back || 'map';
 function finish() {
-  setBg('園區_新鮮事市集');
+  setBg('封面');
   confetti(); beep(true);
   const t = '今日任務做完了，太棒了！明天再來，能收服更多字寶寶。';
   app.innerHTML = `<div class="panel center" style="margin:auto"><img src="assets/cut/半半_合體.webp" alt="" style="width:180px"><div class="say">${z(t)}</div>
-    <button class="btn" data-go="land">${z('回去')}</button></div>`;
+    <button class="btn" data-go="map">${z('回去')}</button></div>`;
   bind(); speak(t);
 }
-const freeList = t => flow = { q: CHARS.slice().sort((a, b) => stateOf(a.c) - stateOf(b.c)).map(d => ({ t, c: d.c })), i: 0 };
+function freeList(t, u) {
+  const L = OPEN.find(l => l.unit === u);
+  let list = BANK.filter(d => L.lessons.includes(d.lesson));
+  if (t === 'combine') list = list.filter(canCombine);
+  list = shuffle(list).sort((a, b) => stateOf(a.c) - stateOf(b.c));
+  flow = { q: list.map(d => ({ t, c: d.c })), i: 0, back: 'land/' + u };
+}
 
 // ---------- 合體工坊 ----------
-function combine(c) {
-  const d = byC[c], r = rec(c);
+async function combine(c) {
+  const d = byC[c], r = rec(c), opts = shuffle(optionsFor(d));
+  await fontsReady(opts);
   setBg('設施_合體工坊');
-  const sent = d.say;
   let tries = 0;
-  app.innerHTML = `${topbar('land', z('合體工坊'))}
+  app.innerHTML = `${topbar(backOf(), z('合體工坊'))}
     <div class="panel">
-      <div class="row say">${z(sent, () => `<span class="blank">${bp(ZY[c])}</span>`)} ${spBtn(sent)}</div>
+      <div class="row say">${z(d.say, (x, y) => `<span class="blank">${bp(y)}</span>`)} ${spBtn(d.say)}</div>
       <div class="work">
         <img class="buddy" src="assets/cut/半半_思考.webp" alt="">
         <div class="frame" id="f"><span class="g" id="fg">${glyphGiven(d)}</span></div>
-        <img class="pic" src="assets/cut/${d.pic}.webp" alt="" id="pic">
+        ${picHtml(d)}
       </div>
       <div class="msg" id="m">${z('字寶寶只剩一半，請幫它找回另一半！')}</div>
-      <div class="opts" id="o">${shuffle(d.o).map(o => `<button class="opt" data-c="${optOf(o)[0]}"><span class="g">${glyphOpt(d, o)}</span></button>`).join('')}</div>
+      <div class="opts" id="o">${opts.map(o => `<button class="opt" data-c="${o}"><span class="g">${glyphOpt(d, o)}</span></button>`).join('')}</div>
     </div>`;
   bind();
   const f = document.getElementById('f'), fg = document.getElementById('fg'), m = document.getElementById('m');
   app.querySelectorAll('.opt').forEach(b => b.onclick = () => {
-    const pickC = b.dataset.c, o = d.o.find(x => optOf(x)[0] === pickC);
-    fg.innerHTML = glyphGiven(d) + glyphOpt(d, o);
+    const pickC = b.dataset.c;
+    fg.innerHTML = glyphGiven(d) + glyphOpt(d, pickC);
     if (pickC === c) {
       fg.innerHTML = `<span>${c}</span>`;
       f.className = 'frame ok'; beep(true); confetti();
       if (!tries) S.stars++;
       r.combined = true; if (!r.due) r.due = today();
       save();
-      m.innerHTML = z('合體成功！') + ' ' + z(d.tip);
-      speak(plain(sent));
+      m.innerHTML = z('合體成功！') + ' ' + z(tipOf(d));
+      speak(d.say);
       document.getElementById('o').innerHTML = `<button class="btn mint" id="nx">${z('下一個')}</button>`;
       document.getElementById('nx').onclick = nextStep;
     } else {
@@ -267,13 +332,14 @@ function combine(c) {
 // ---------- 魔法黑板 ----------
 function board(c) {
   const d = byC[c], r = rec(c);
+  if (!r.combined) { r.combined = true; if (!r.due) r.due = today(); }
   setBg('設施_魔法黑板');
-  app.innerHTML = `${topbar('land', z('魔法黑板'))}
+  app.innerHTML = `${topbar(backOf(), z('魔法黑板'))}
     <div class="panel">
-      <div class="row say" id="s">${z(d.say, () => `<span class="blank">${bp(ZY[c])}</span>`)} ${spBtn(d.say)}</div>
+      <div class="row say" id="s">${z(d.say, (x, y) => `<span class="blank">${bp(y)}</span>`)} ${spBtn(d.say)}</div>
       <div class="work">
         <div class="boardwrap" id="bw"><canvas id="pad"></canvas></div>
-        <img class="pic" src="assets/cut/${d.pic}.webp" alt="">
+        ${picHtml(d)}
       </div>
       <div class="msg" id="m">${z('自己想一想，寫在黑板上。寫在紙上也可以！')}</div>
       <div class="row" id="a">
@@ -296,7 +362,7 @@ function board(c) {
   document.getElementById('mg').onclick = () => {
     document.getElementById('bw').insertAdjacentHTML('beforeend', `<div class="ghost">${c}</div>`);
     document.getElementById('s').querySelector('.blank').outerHTML = `<span class="blank found">${c}</span>`;
-    document.getElementById('m').innerHTML = z(d.tip) + '<br>' + z('自己比一比，寫得對不對？');
+    document.getElementById('m').innerHTML = z(tipOf(d)) + '<br>' + z('自己比一比，寫得對不對？');
     document.getElementById('a').innerHTML = `
       <button class="btn mint" data-r="ok">${z('全對')}</button>
       <button class="btn gray" data-r="near">${z('差一點')}</button>
@@ -316,7 +382,8 @@ function rate(c, r, how) {
   else {
     r.box = 0; r.lastOk = null; r.due = addDays(t, 1);
     if (flow && !flow.q.some((s, i) => i >= flow.i && s.t === 'board' && s.c === c)) {
-      const at = flow.q.length && flow.q[flow.q.length - 1].t === 'train' ? flow.q.length - 1 : flow.q.length;
+      let at = flow.q.findIndex((s, i) => i >= flow.i && s.t !== 'board' && s.t !== 'combine');
+      if (at < 0) at = flow.q.length;
       flow.q.splice(at, 0, { t: 'board', c });
     }
   }
@@ -334,17 +401,105 @@ function rate(c, r, how) {
   nextStep();
 }
 
-// ---------- 對號小火車 ----------
-function train() {
-  setBg('設施_對號小火車');
-  const next = PASSAGES.find(p => (S.trains[p.id] || 0) < 2) || PASSAGES[Math.floor(Math.random() * PASSAGES.length)];
-  runTrain(next, Math.min(S.trains[next.id] || 0, 1));
+// ---------- 詞語摩天輪：中心字配成詞，再寫一次；最後玩接龍 ----------
+const wordsOf = d => d.words.map(w => ({ text: plain(w), marked: w })).filter(w => w.text.length === 2 && w.text.includes(d.c));
+const ALLWORDS = BANK.flatMap(d => wordsOf(d).map(w => ({ ...w, c: d.c })));
+const uniq = a => [...new Set(a)];
+function wheel(u, center) {
+  const L = OPEN.find(l => l.unit === u);
+  const pool = BANK.filter(d => L.lessons.includes(d.lesson) && wordsOf(d).length >= 2);
+  const d = center && byC[center] && wordsOf(byC[center]).length >= 1 ? byC[center] : shuffle(pool)[0];
+  const list = wordsOf(d).slice(0, 3);
+  setBg('設施_詞語摩天輪');
+  let idx = 0;
+  const others = uniq(ALLWORDS.filter(w => !w.text.includes(d.c)).map(w => w.text[0]));
+  function tilesFor(w) {
+    const need = w.text.replace(d.c, '');
+    return shuffle([need, ...shuffle(others.filter(x => x !== need)).slice(0, 5)]);
+  }
+  function render(msg) {
+    const w = list[idx], need = w.text.replace(d.c, '');
+    const shown = w.marked.replace(new RegExp(need + '\\[([^\\]]*)\\]'), '{' + need + '}[$1]');
+    app.innerHTML = `${topbar(flow ? backOf() : 'land/' + u, z('詞語摩天輪'))}
+      <div class="panel">
+        <div class="wheelwrap">
+          <div class="wheel" style="--r:${idx * 40}deg"><div class="hub">${d.c}</div>
+          ${[0, 1, 2, 3, 4, 5].map(i => {
+            const a = i * 60, on = i < idx ? list[i] : null;
+            return `<div class="cabin ${on ? 'lit' : ''}" style="--a:${a}deg"><span>${on ? on.text : ''}</span></div>`;
+          }).join('')}</div>
+        </div>
+        <div class="row say">${z(shown, (x, y) => `<span class="blank">${bp(y)}</span>`)} ${spBtn(w.text)}</div>
+        <div class="msg" id="m">${msg || z('幫中間的字找朋友，配成一個詞語！')}</div>
+        <div class="tiles">${tilesFor(w).map(t => `<button class="tile" data-t="${t}">${t}</button>`).join('')}</div>
+      </div>`;
+    bind();
+    speak(w.text);
+    app.querySelectorAll('.tile').forEach(b => b.onclick = () => {
+      if (b.dataset.t === need) {
+        beep(true); S.words[w.text] = w.marked; S.stars++; save();
+        idx++;
+        if (idx >= list.length) return done();
+        render(z('配對成功！再找一個！'));
+      } else { beep(false); b.disabled = true; document.getElementById('m').innerHTML = z('這樣不是詞語，再想想看！'); }
+    });
+  }
+  function done() {
+    confetti();
+    chain(u, d);
+  }
+  render();
 }
-function runTrain(p, level) {
+// 詞語接龍：從剛學的詞接下去
+function chain(u, d) {
+  const first = shuffle(wordsOf(d))[0];
+  let cur = first, count = 0;
+  function pickNext() {
+    const tail = cur.text[1];
+    // 接龍只接同音，避免「師長」接「長城」這種破音字
+    const ra = w => (w.marked.match(/\[([^\]]*)\]/g) || []).map(x => x.slice(1, -1));
+    const tailR = ra(cur)[1];
+    const ok = ALLWORDS.filter(w => w.text[0] === tail && w.text !== cur.text && ra(w)[0] === tailR);
+    if (!ok.length || count >= 3) return end();
+    const right = shuffle(ok)[0];
+    const wrong = shuffle(ALLWORDS.filter(w => w.text[0] !== tail)).slice(0, 2);
+    app.querySelector('.panel').innerHTML = `
+      <div class="row say">${z(cur.marked)} <span style="font-family:var(--sans)">→</span> <span class="blank">${tail}</span></div>
+      <div class="msg">${z('詞語接龍：找一個開頭是這個字的詞語！')}</div>
+      <div class="tiles">${shuffle([right, ...wrong]).map(w => `<button class="btn gray wd" data-w="${w.text}">${z(w.marked)}</button>`).join('')}</div>`;
+    app.querySelectorAll('.wd').forEach(b => b.onclick = () => {
+      if (b.dataset.w === right.text) { beep(true); S.words[right.text] = right.marked; S.stars++; save(); cur = right; count++; pickNext(); }
+      else { beep(false); b.disabled = true; b.style.opacity = .35; }
+    });
+  }
+  function end() {
+    app.querySelector('.panel').innerHTML = `<div class="center"><div class="say">${z('詞語都放進寶典了！')}</div>
+      <button class="btn mint" id="nx">${z('下一個')}</button></div>`;
+    document.getElementById('nx').onclick = () => { if (flow) nextStep(); else wheel(u); };
+  }
+  pickNext();
+}
+function dict() {
+  setBg('園區_故事城堡');
+  const ws = Object.values(S.words);
+  app.innerHTML = `${topbar('map', z('詞語寶典'))}<div class="panel">
+    ${ws.length ? `<div class="words">${ws.map(w => `<button class="wordcard" data-say="${esc(plain(w))}">${z(w)}</button>`).join('')}</div>` : `<div class="say center">${z('還沒有詞語，去摩天輪找一找！')}</div>`}
+  </div>`;
+  bind();
+}
+
+// ---------- 對號小火車 ----------
+function train(u) {
+  setBg('設施_對號小火車');
+  const pool = PASSAGES.filter(p => p.unit === u);
+  const next = pool.find(p => (S.trains[p.id] || 0) < 2) || shuffle(pool)[0];
+  runTrain(next, Math.min(S.trains[next.id] || 0, 1), u);
+}
+function runTrain(p, level, u) {
   const ans = [...p.text.matchAll(/\{(.)\}/g)].map(m => m[1]);
   const fill = ans.map(() => null);
   let cur = 0;
-  const tiles = shuffle([...ans, ...p.extra]);
+  const tiles = shuffle([...new Set([...ans, ...p.extra])]);
   let idx;
   function render(checked) {
     idx = 0;
@@ -353,7 +508,7 @@ function runTrain(p, level) {
       const on = level === 0 && i === cur;
       return `<span class="gap${on ? ' on' : ''}">${level === 0 ? `<b>${i + 1}</b>` : ''}${bp(zy)}</span>`;
     });
-    app.innerHTML = `${topbar('land', z('對號小火車'))}
+    app.innerHTML = `${topbar(flow ? backOf() : 'land/' + u, z('對號小火車'))}
       <div class="panel">
         <div class="row" style="justify-content:space-between"><div class="passage" style="flex:1;min-width:0">${text}</div>${spBtn(p.text)}</div>
         <div class="train" id="tr"><div class="engine"></div>${ans.map((a, i) => {
@@ -362,7 +517,7 @@ function runTrain(p, level) {
         }).join('')}</div>
         <div class="msg" id="m">${level === 0 ? z('看亮起來的格子，把字放進一樣號碼的車廂。') : z('考卷模式：一格一格用手指對好，再放進車廂！')}</div>
         <div class="tiles">${tiles.map(t => `<button class="tile" data-t="${t}" ${fill.includes(t) ? 'disabled' : ''}>${t}</button>`).join('')}</div>
-        <div class="row" style="margin-top:12px">${fill.every(Boolean) ? `<button class="btn mint" id="goT">${z('發車')}</button>` : ''}</div>
+        <div class="row" style="margin-top:12px" id="act">${fill.every(Boolean) ? `<button class="btn mint" id="goT">${z('發車')}</button>` : ''}</div>
       </div>`;
     bind();
     app.querySelectorAll('.car').forEach(b => b.onclick = () => {
@@ -379,7 +534,7 @@ function runTrain(p, level) {
     if (cur < 0) return;
     if (level === 0 && t !== ans[cur]) {
       beep(false);
-      document.getElementById('m').innerHTML = z(`看一下注音，再找找看！`);
+      document.getElementById('m').innerHTML = z('看一下注音，再找找看！');
       b.disabled = true;
       return;
     }
@@ -395,10 +550,9 @@ function runTrain(p, level) {
       S.trains[p.id] = (S.trains[p.id] || 0) + 1; S.stars += 2; save();
       document.getElementById('tr').classList.add('go');
       document.getElementById('m').innerHTML = z('全對，小火車發車了！');
-      speak(plain(p.text));
-      const row = app.querySelector('#goT').parentElement;
-      row.innerHTML = `<button class="btn mint" id="nx">${z('下一個')}</button>`;
-      document.getElementById('nx').onclick = () => { if (flow) nextStep(); else { location.hash = 'land'; route(); } };
+      speak(p.text);
+      document.getElementById('act').innerHTML = `<button class="btn mint" id="nx">${z('下一個')}</button>`;
+      document.getElementById('nx').onclick = () => { if (flow) nextStep(); else train(u); };
       return;
     }
     const shifted = wrong.some(i => fill[i] === ans[i - 1] || fill[i] === ans[i + 1]);
@@ -413,34 +567,76 @@ function runTrain(p, level) {
   render();
 }
 
+// ---------- 偵探小屋 ----------
+function detect(u, one) {
+  setBg('設施_偵探小屋');
+  const idx = shuffle(DETECT.map((q, i) => i)).sort((a, b) => (S.detect[a] || 0) - (S.detect[b] || 0))[0];
+  const q = DETECT[idx], hasWrong = plain(q.q).includes('錯誤');
+  let stamped = !hasWrong;
+  function html() {
+    const qText = hasWrong && !stamped
+      ? z(q.q).replace(/(<span class="zc">錯.*?<\/span><span class="zc">誤.*?<\/span>)(?=<)/, `<button id="stamp" class="stamp">$1</button>`)
+      : z(q.q);
+    return `${topbar(flow ? backOf() : 'land/' + u, z('偵探小屋'))}
+      <div class="panel">
+        ${q.t ? `<div class="passage">${z(q.t)}</div><hr>` : ''}
+        <div class="row say">${qText} ${spBtn((q.t ? q.t + ' ' : '') + q.q)}</div>
+        <div class="msg" id="m">${hasWrong && !stamped ? z('題目問「錯誤」的！先蓋紅章在這兩個字上。') : ''}</div>
+        <div class="choices">${q.o.map((o, i) => `<button class="choice" data-i="${i}" ${stamped ? '' : 'disabled'}>${z(o)}</button>`).join('')}</div>
+        <div class="row" id="act" style="margin-top:12px"></div>
+      </div>`;
+  }
+  function draw() {
+    app.innerHTML = html(); bind();
+    const st = document.getElementById('stamp');
+    if (st) st.onclick = () => { stamped = true; beep(true); draw(); };
+    app.querySelectorAll('.choice').forEach(b => b.onclick = () => {
+      if (+b.dataset.i === q.a) {
+        beep(true); b.classList.add('right'); S.stars++; S.detect[idx] = (S.detect[idx] || 0) + 1; save();
+        document.getElementById('m').innerHTML = z('答對了！') + ' ' + z(q.why);
+        app.querySelectorAll('.choice').forEach(x => x.disabled = true);
+        document.getElementById('act').innerHTML = `<button class="btn mint" id="nx">${z('下一個')}</button>`;
+        document.getElementById('nx').onclick = () => { if (flow) nextStep(); else detect(u); };
+      } else { beep(false); b.classList.add('wrongc'); b.disabled = true; document.getElementById('m').innerHTML = z('再想一想！'); }
+    });
+  }
+  draw();
+}
+
 // ---------- 家長頁（前台沒有入口）與拆字檢查頁 ----------
 function parent() {
   bg.style.backgroundImage = 'none';
   const name = { 0: '未練', 1: '練習中', 2: '已收服' };
+  const seen = BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined);
   app.innerHTML = `<div class="panel" style="font-family:var(--sans)"><h2>家長頁</h2>
-    <p>完成任務 ${S.days.length} 天；對號小火車跳格 ${S.shifts} 次。</p>
-    <div class="tablewrap"><table><tr><th>字</th><th>課次</th><th>狀態</th><th>下次複習</th><th>全對</th><th>差一點</th><th>忘了</th><th>拼錯部件</th></tr>
-    ${CHARS.map(d => { const r = S.chars[d.c] || {}; return `<tr><td style="font-family:var(--kai);font-size:26px">${d.c}</td><td>${d.lesson}</td><td>${name[stateOf(d.c)]}</td><td>${r.due || '—'}</td><td>${r.ok || 0}</td><td>${r.near || 0}</td><td>${r.forget || 0}</td><td>${r.wrongParts || 0}</td></tr>`; }).join('')}
-    </table></div>
+    <p>完成任務 ${S.days.length} 天；已練 ${seen.length}／${BANK.length} 字；已收服 ${BANK.filter(d => stateOf(d.c) === 2).length} 字；詞語寶典 ${Object.keys(S.words).length} 個；小火車跳格 ${S.shifts} 次。</p>
+    <p><label>目前學校上到：<select id="fc"><option value="0">不指定</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${S.focus === i + 1 ? 'selected' : ''}>第 ${i + 1} 課</option>`).join('')}</select></label>（考卷錯字之後，先練這一課）</p>
+    <div class="tablewrap"><table><tr><th>字</th><th>課</th><th>狀態</th><th>下次複習</th><th>全對</th><th>差一點</th><th>忘了</th><th>拼錯部件</th></tr>
+    ${seen.map(d => { const r = S.chars[d.c]; return `<tr><td style="font-family:var(--kai);font-size:26px">${d.c}${HAND[d.c] ? '＊' : ''}</td><td>${d.lesson}</td><td>${name[stateOf(d.c)]}</td><td>${r.due || '—'}</td><td>${r.ok}</td><td>${r.near}</td><td>${r.forget}</td><td>${r.wrongParts}</td></tr>`; }).join('') || '<tr><td colspan="8">還沒有練習紀錄</td></tr>'}
+    </table></div><p>＊是考卷錯字。</p>
     <div class="row" style="margin-top:12px"><button class="btn gray" data-go="">回遊戲</button><button class="btn red" id="rs">清除所有進度</button></div></div>`;
   bind();
+  document.getElementById('fc').onchange = e => { S.focus = +e.target.value; save(); };
   document.getElementById('rs').onclick = () => { if (confirm('確定清除所有進度？清除後無法復原。')) { try { localStorage.removeItem(KEY); } catch (e) {} location.hash = ''; location.reload(); } };
 }
-function debugPage() {
+async function debugPage() {
   bg.style.backgroundImage = 'none';
-  app.innerHTML = `<div class="panel"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:6px;font-size:0">${CHARS.map(d => `
-    <div style="display:flex;gap:4px;border:1px solid #ccc;padding:4px">
-    ${d.o.map(o => `<span class="g" style="font-size:100px;background:#fff">${glyphGiven(d)}${glyphOpt(d, o)}</span>`).join('')}</div>`).join('')}</div></div>`;
+  await fontsReady(BANK.map(d => d.c));
+  const list = BANK.filter(canCombine);
+  app.innerHTML = `<div class="panel" style="padding:4px"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:2px;font-size:0">${list.map(d => `<span class="g" style="font-size:66px;background:#fff">${glyphGiven(d)}${glyphOpt(d, d.c)}</span>`).join('')}</div></div>`;
 }
 
 function route() {
-  const h = location.hash.replace('#', '').replace(/^\//, '');
+  const [h, arg] = location.hash.replace('#', '').replace(/^\//, '').split('/');
+  const u = +arg || 1;
   window.scrollTo(0, 0);
   if (h === 'map') return map();
-  if (h === 'land') return land();
-  if (h === 'combine') { freeList('combine'); return nextStep(); }
-  if (h === 'board') { freeList('board'); return nextStep(); }
-  if (h === 'train') { flow = null; return train(); }
+  if (h === 'land') return land(u);
+  if (h === 'combine' || h === 'board') { freeList(h, u); return nextStep(); }
+  if (h === 'wheel') { flow = null; return wheel(u); }
+  if (h === 'train') { flow = null; return train(u); }
+  if (h === 'detect') { flow = null; return detect(u); }
+  if (h === 'dict') return dict();
   if (h === 'parent') return parent();
   if (h === 'debug') return debugPage();
   home();
