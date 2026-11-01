@@ -238,7 +238,7 @@ function land(u) {
   if (sb) sb.onclick = startScan;
 }
 // 拍手草原：一年級的字先掃描，寫得出來就過關，寫不出來才進每日複習
-const G1 = BANK.filter(d => d.lesson > 100);
+const G1 = BANK.filter(d => d.lesson > 100 && d.lesson < 300);
 const scanLeft = () => G1.filter(d => !(S.chars[d.c] && S.chars[d.c].scanned)).sort((a, b) => b.lesson - a.lesson);
 function scanPanel() {
   const left = scanLeft().length;
@@ -266,10 +266,10 @@ function scanDone(res) {
 
 // ---------- 今日任務與自由練習的流程 ----------
 let flow = null;
-// 順序：考卷錯字 → 家長設定的目前課次 → 二上其他課
+// 順序：考卷錯字 → 家長設定的目前課次 → 二上其他課；二下要家長把課次設到二下才開始出新字
 function freshOrder() {
   const score = d => (HAND[d.c] ? 0 : d.lesson === S.focus ? 1 : 2);
-  return BANK.filter(d => d.lesson < 100).sort((a, b) => score(a) - score(b) || a.lesson - b.lesson);
+  return BANK.filter(d => d.lesson < 100 || (d.lesson > 300 && S.focus > 300)).sort((a, b) => score(a) - score(b) || a.lesson - b.lesson);
 }
 function buildTask() {
   const t = today(), q = [];
@@ -648,9 +648,9 @@ function parent() {
   const seen = BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined);
   app.innerHTML = `<div class="panel" style="font-family:var(--sans)"><h2>家長頁</h2>
     <p>完成任務 ${S.days.length} 天；已練 ${seen.length}／${BANK.length} 字；已收服 ${BANK.filter(d => stateOf(d.c) === 2).length} 字；一年級掃描 ${G1.length - scanLeft().length}／${G1.length} 字，要補 ${G1.filter(d => S.chars[d.c] && S.chars[d.c].scanned && !S.chars[d.c].caught).map(d => d.c).join('') || '無'}；詞語寶典 ${Object.keys(S.words).length} 個；小火車跳格 ${S.shifts} 次。</p>
-    <p><label>目前學校上到：<select id="fc"><option value="0">不指定</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${S.focus === i + 1 ? 'selected' : ''}>第 ${i + 1} 課</option>`).join('')}</select></label>（考卷錯字之後，先練這一課）</p>
+    <p><label>目前學校上到：<select id="fc"><option value="0">不指定</option>${[...Array.from({ length: 12 }, (_, i) => [i + 1, '二上第 ' + (i + 1) + ' 課']), ...Array.from({ length: 12 }, (_, i) => [301 + i, '二下第 ' + (i + 1) + ' 課'])].map(([v, n]) => `<option value="${v}" ${S.focus === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>（考卷錯字之後，先練這一課；設到二下才會出二下的新字）</p>
     <div class="tablewrap"><table><tr><th>字</th><th>課</th><th>狀態</th><th>下次複習</th><th>全對</th><th>差一點</th><th>忘了</th><th>拼錯部件</th></tr>
-    ${seen.map(d => { const r = S.chars[d.c]; return `<tr><td style="font-family:var(--kai);font-size:26px">${d.c}${HAND[d.c] ? '＊' : ''}</td><td>${d.lesson > 200 ? '一下' + (d.lesson - 200) : d.lesson > 100 ? '一上' + (d.lesson - 100) : '二上' + d.lesson}</td><td>${name[stateOf(d.c)]}</td><td>${r.due || '—'}</td><td>${r.ok}</td><td>${r.near}</td><td>${r.forget}</td><td>${r.wrongParts}</td></tr>`; }).join('') || '<tr><td colspan="8">還沒有練習紀錄</td></tr>'}
+    ${seen.map(d => { const r = S.chars[d.c]; return `<tr><td style="font-family:var(--kai);font-size:26px">${d.c}${HAND[d.c] ? '＊' : ''}</td><td>${d.lesson > 300 ? '二下' + (d.lesson - 300) : d.lesson > 200 ? '一下' + (d.lesson - 200) : d.lesson > 100 ? '一上' + (d.lesson - 100) : '二上' + d.lesson}</td><td>${name[stateOf(d.c)]}</td><td>${r.due || '—'}</td><td>${r.ok}</td><td>${r.near}</td><td>${r.forget}</td><td>${r.wrongParts}</td></tr>`; }).join('') || '<tr><td colspan="8">還沒有練習紀錄</td></tr>'}
     </table></div><p>＊是考卷錯字。</p>
     <div class="row" style="margin-top:12px"><button class="btn gray" data-go="">回遊戲</button><button class="btn red" id="rs">清除所有進度</button></div></div>`;
   bind();
