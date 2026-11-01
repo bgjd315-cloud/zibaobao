@@ -712,8 +712,9 @@ function detect(u, one) {
   const q = DETECT[idx], hasWrong = plain(q.q).includes('錯誤');
   let stamped = !hasWrong;
   function html() {
+    const [qa, qw, qb] = q.q.split(/(錯(?:\[[^\]]*\])?誤(?:\[[^\]]*\])?)/);
     const qText = hasWrong && !stamped
-      ? z(q.q).replace(/(<span class="zc">錯.*?<\/span><span class="zc">誤.*?<\/span>)(?=<)/, `<button id="stamp" class="stamp">$1</button>`)
+      ? `${z(qa)}<button id="stamp" class="stamp">${z(qw)}</button>${z(qb)}`
       : z(q.q);
     return `${topbar(flow ? backOf() : 'land/' + u, z('偵探小屋'))}
       <div class="panel">
