@@ -465,10 +465,43 @@ function board(c) {
       <button class="btn mint" data-r="ok">${z('全對')}</button>
       <button class="btn gray" data-r="near">${z('差一點')}</button>
       <button class="btn red" data-r="forget">${z('忘了')}</button>`;
-    app.querySelectorAll('[data-r]').forEach(b => b.onclick = () => rate(c, r, b.dataset.r));
+    app.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+      if (b.dataset.r === 'forget') { rate(c, r, 'forget', true); study(); } else rate(c, r, b.dataset.r);
+    });
   };
+  // 忘了：先看答案，記住後遮起來再寫一次，寫對才換下一個字（紀錄仍算忘了，明天再複習）
+  const msg = h => document.getElementById('m').innerHTML = h, act = h => document.getElementById('a').innerHTML = h;
+  const clearPad = () => g.clearRect(0, 0, box.width, box.height);
+  function study() {
+    clearPad();
+    if (!document.querySelector('.ghost')) document.getElementById('bw').insertAdjacentHTML('beforeend', `<div class="ghost">${c}</div>`);
+    const bl = document.querySelector('#s .blank');
+    bl.className = 'blank found'; bl.textContent = c;
+    msg(z('看清楚答案，記住了再寫一次。') + '<br>' + z(tipOf(d)));
+    act(`<button class="btn" id="memo">${z('我記住了')}</button>`);
+    speak(d.say);
+    document.getElementById('memo').onclick = again;
+  }
+  function again() {
+    clearPad();
+    document.querySelector('.ghost').remove();
+    const bl = document.querySelector('#s .blank');
+    bl.className = 'blank'; bl.innerHTML = bp(d.zy);
+    msg(z('不看答案，再寫一次！'));
+    act(`<button class="btn gray" id="cl2">${z('清除')}</button><button class="btn" id="mg2">${z('變魔法')}</button>`);
+    document.getElementById('cl2').onclick = clearPad;
+    document.getElementById('mg2').onclick = () => {
+      document.getElementById('bw').insertAdjacentHTML('beforeend', `<div class="ghost">${c}</div>`);
+      const b2 = document.querySelector('#s .blank');
+      b2.className = 'blank found'; b2.textContent = c;
+      msg(z('自己比一比，寫得對不對？'));
+      act(`<button class="btn mint" id="ok2">${z('寫對了')}</button><button class="btn gray" id="re2">${z('再練一次')}</button>`);
+      document.getElementById('ok2').onclick = () => { beep(true); nextStep(); };
+      document.getElementById('re2').onclick = study;
+    };
+  }
 }
-function rate(c, r, how) {
+function rate(c, r, how, stay) {
   const t = today();
   r[how]++;
   if (flow && flow.scan) {
@@ -476,7 +509,7 @@ function rate(c, r, how) {
     if (how === 'ok') { r.caught = true; r.box = 2; r.lastOk = t; r.due = addDays(t, 7); S.stars++; flow.scan.ok.push(c); }
     else { r.box = 0; r.lastOk = null; r.due = addDays(t, 1); flow.scan.bad.push(c); }
     save();
-    return nextStep();
+    return stay ? undefined : nextStep();
   }
   let caughtNow = false;
   if (how === 'ok') {
@@ -503,7 +536,7 @@ function rate(c, r, how) {
     speak(text);
     return;
   }
-  nextStep();
+  if (!stay) nextStep();
 }
 
 // ---------- 詞語摩天輪：中心字配成詞，再寫一次；最後玩接龍 ----------
