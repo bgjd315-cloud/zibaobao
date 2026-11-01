@@ -100,7 +100,8 @@ const pc = n => (n * 100).toFixed(1) + '%';
 const setBg = n => { bg.style.backgroundImage = `url("assets/bg/${n}.webp")`; };
 
 // ---------- 拆字：在畫布上找筆畫最少的分界線，比例跟著實際字型走 ----------
-const FONT = '"LXGW WenKai TC","DFKai-SB","BiauKai","Kaiti TC",serif';
+// ?font=lx 可模擬手機（沒有標楷體時）的字型
+const FONT = new URLSearchParams(location.search).get('font') === 'lx' ? '"LXGW WenKai TC",serif' : '"TW-MOE-Std-Kai","TW-Kai","DFKai-SB","BiauKai","BiauKaiTC","標楷體","LXGW WenKai TC","Kaiti TC",serif';
 const cutCache = {};
 const cv0 = document.createElement('canvas'); cv0.width = cv0.height = 100;
 const g0 = cv0.getContext('2d', { willReadFrequently: true });
@@ -134,12 +135,70 @@ function clipPart(c, t, part) {
   return `inset(${pc(b)} ${pc(1 - e)} ${pc(1 - f)} ${pc(a)})`;
 }
 const other = g => ({ L: 'R', R: 'L', T: 'B', B: 'T', O: 'I' }[g]);
-const glyphGiven = d => `<span class="give" style="clip-path:${clipPart(d.c, d.t, giveOf(d))}">${d.c}</span>`;
-const glyphOpt = (d, c) => `<span class="put" style="clip-path:${clipPart(c, d.t, other(giveOf(d)))}">${c}</span>`;
+// 依連在一起的筆畫分組：整筆歸到同一邊，不會切出半截筆畫；分不出來才退回直線裁切
+const pieceCache = {}, splitStat = {};
+const SZ = 240, cvP = document.createElement('canvas');
+cvP.width = cvP.height = SZ;
+const gP = cvP.getContext('2d', { willReadFrequently: true });
+function pieceURL(c, t, part, color) {
+  const k = [c, t, part, color].join('|');
+  if (pieceCache[k]) return pieceCache[k];
+  gP.clearRect(0, 0, SZ, SZ); gP.font = SZ + 'px ' + FONT; gP.fillStyle = color; gP.textBaseline = 'alphabetic';
+  const m = gP.measureText(c), asc = m.fontBoundingBoxAscent || SZ * .88, des = m.fontBoundingBoxDescent || SZ * .12;
+  gP.fillText(c, (SZ - m.width) / 2, (SZ + asc - des) / 2);
+  const img = gP.getImageData(0, 0, SZ, SZ), d = img.data, lab = new Int32Array(SZ * SZ).fill(-1);
+  const cut = t === 'L' || t === 'T' ? findCut(c, t) * SZ : 0, box = BOX[t];
+  const sideOf = (cx, cy) => t === 'L' ? (cx < cut ? 'L' : 'R') : t === 'T' ? (cy < cut ? 'T' : 'B')
+    : (cx > box[0] * SZ && cx < box[2] * SZ && cy > box[1] * SZ && cy < box[3] * SZ ? 'I' : 'O');
+  const sides = [], counts = {};
+  for (let n = 0, id = 0; n < SZ * SZ; n++) {
+    if (lab[n] >= 0 || d[n * 4 + 3] < 20) continue;
+    const st = [n]; lab[n] = id;
+    let sx = 0, sy = 0, cnt = 0, x0 = SZ, x1 = 0, y0 = SZ, y1 = 0;
+    while (st.length) {
+      const q = st.pop(), x = q % SZ, y = (q - x) / SZ;
+      sx += x; sy += y; cnt++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= SZ || ny >= SZ) continue;
+        const w = ny * SZ + nx;
+        if (lab[w] < 0 && d[w * 4 + 3] >= 20) { lab[w] = id; st.push(w); }
+      }
+    }
+    const m2 = SZ * .05;
+    const side = box ? (x0 < box[0] * SZ - m2 || x1 > box[2] * SZ + m2 || y0 < box[1] * SZ - m2 || y1 > box[3] * SZ + m2 ? 'O' : 'I') : sideOf(sx / cnt, sy / cnt);
+    sides[id] = side; counts[side] = (counts[side] || 0) + cnt; id++;
+  }
+  splitStat[c + t] = counts;
+  const whole = !counts[part];
+  for (let n = 0; n < SZ * SZ; n++) {
+    let keep;
+    if (lab[n] >= 0 && !whole) keep = sides[lab[n]] === part;
+    else if (whole) { const x = n % SZ, y = (n - x) / SZ; keep = sideOf(x, y) === part; }
+    else keep = false;
+    if (!keep) d[n * 4 + 3] = 0;
+  }
+  gP.putImageData(img, 0, 0);
+  return pieceCache[k] = cvP.toDataURL('image/png');
+}
+const pieceImg = (c, t, part, color) => `<img src="${pieceURL(c, t, part, color)}" alt="">`;
+const glyphGiven = d => pieceImg(d.c, d.t, giveOf(d), '#b9531a');
+const glyphOpt = (d, c) => pieceImg(c, d.t, other(giveOf(d)), '#23806a');
 const canCombine = d => d.t !== 'X';
+// 筆畫黏在一起分不開（任一半太少）就不拆，避免出現半個字其實幾乎是整個字
+function splitOK(c, t) {
+  if (t === 'X') return false;
+  pieceURL(c, t, t === 'L' ? 'L' : t === 'T' ? 'T' : 'O', '#000');
+  const v = Object.values(splitStat[c + t] || {}), sum = v.reduce((a, b) => a + b, 0);
+  return v.length === 2 && Math.min(...v) / sum >= (BOX[t] ? .1 : .14);
+}
 function optionsFor(d) {
-  if (HAND[d.c]) return HAND[d.c].o;
-  const same = BANK.filter(x => x.c !== d.c && x.t === d.t && giveOf(x) === giveOf(d));
+  if (HAND[d.c]) {
+    const o = HAND[d.c].o.filter(c => splitOK(c, d.t));
+    if (o.length === 3) return o;
+  }
+  const same = shuffle(BANK.filter(x => x.c !== d.c && x.t === d.t && giveOf(x) === giveOf(d))).filter(x => splitOK(x.c, x.t));
   const a = shuffle(same.filter(x => x.rad === d.rad)).slice(0, 2);
   const b = shuffle(same.filter(x => !a.includes(x)));
   return [d.c, ...a.concat(b).slice(0, 2).map(x => x.c)];
@@ -147,7 +206,7 @@ function optionsFor(d) {
 const tipOf = d => HAND[d.c] ? HAND[d.c].tip : `部首是「${d.rad}」。`;
 const picOf = d => (HAND[d.c] && HAND[d.c].pic) || PICS[d.c] || '';
 const picHtml = d => picOf(d) ? `<img class="pic" src="assets/cut/${picOf(d)}.webp" alt="">` : `<img class="pic" src="assets/cut/字寶寶_糖果.webp" alt="">`;
-const fontsReady = cs => Promise.all(cs.map(c => document.fonts.load('100px "LXGW WenKai TC"', c))).catch(() => {});
+const fontsReady = cs => Promise.all(cs.map(c => document.fonts.load('100px ' + FONT, c))).catch(() => {});
 
 const topbar = (back, title) => `
   <div class="top">
@@ -210,11 +269,12 @@ function map() {
 function signs(list) {
   return list.map(d => {
     const st = stateOf(d.c);
-    return `<button class="sign s${st}" aria-label="${d.c}" data-say="${d.c}"><span class="g">${st || !canCombine(d) ? `<span>${d.c}</span>` : `<span style="clip-path:${clipPart(d.c, d.t, giveOf(d))}">${d.c}</span>`}</span></button>`;
+    return `<button class="sign s${st}" aria-label="${d.c}" data-say="${d.c}"><span class="g">${st || !splitOK(d.c, d.t) ? `<span>${d.c}</span>` : pieceImg(d.c, d.t, giveOf(d), '#4a3320')}</span></button>`;
   }).join('');
 }
-function land(u) {
+async function land(u) {
   const L = OPEN.find(l => l.unit === u);
+  await fontsReady(BANK.filter(d => L.lessons.includes(d.lesson)).map(d => d.c));
   setBg(L.img);
   const list = BANK.filter(d => L.lessons.includes(d.lesson));
   const groups = L.lessons.map(n => {
@@ -320,8 +380,11 @@ function freeList(t, u) {
 
 // ---------- 合體工坊 ----------
 async function combine(c) {
-  const d = byC[c], r = rec(c), opts = shuffle(optionsFor(d));
-  await fontsReady(opts);
+  const d = byC[c], r = rec(c);
+  await fontsReady(HAND[c] ? HAND[c].o : [c]);
+  if (!splitOK(c, d.t)) return nextStep();
+  await fontsReady(BANK.filter(x => x.t === d.t).map(x => x.c));
+  const opts = shuffle(optionsFor(d));
   setBg('設施_合體工坊');
   let tries = 0;
   app.innerHTML = `${topbar(backOf(), z('合體工坊'))}
@@ -661,7 +724,8 @@ async function debugPage() {
   bg.style.backgroundImage = 'none';
   await fontsReady(BANK.map(d => d.c));
   const list = BANK.filter(canCombine);
-  app.innerHTML = `<div class="panel" style="padding:4px"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:2px;font-size:0">${list.map(d => `<span class="g" style="font-size:66px;background:#fff">${glyphGiven(d)}${glyphOpt(d, d.c)}</span>`).join('')}</div></div>`;
+  window.__bad = list.filter(d => !splitOK(d.c, d.t)).map(d => d.c).join('');
+  app.innerHTML = `<div class="panel" style="padding:4px"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:3px;font-size:0">${list.map(d => `<span style="display:flex;background:#fff;border:1px solid #ddd"><span class="g" style="font-size:46px">${glyphGiven(d)}</span><span class="g" style="font-size:46px">${glyphOpt(d, d.c)}</span></span>`).join('')}</div></div>`;
 }
 
 function route() {

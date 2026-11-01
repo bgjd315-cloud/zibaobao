@@ -1,5 +1,5 @@
 :root{
-  --kai:"LXGW WenKai TC","TW-Kai","TW-MOE-Std-Kai","DFKai-SB","BiauKai","BiauKaiTC","標楷體","Kaiti TC","STKaiti",serif;
+  --kai:"TW-MOE-Std-Kai","TW-Kai","DFKai-SB","BiauKai","BiauKaiTC","標楷體","LXGW WenKai TC","Kaiti TC","STKaiti",serif;
   --sans:"Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif;
   --ink:#4a3320;--paper:#fffaf0;--line:#e9d7b8;--orange:#e87f2e;--mint:#3fa98a;--red:#d9534f;--gold:#f2b632;
 }
@@ -149,3 +149,5 @@ hr{border:none;border-top:2px dashed var(--line);margin:10px 0}
 .top h2 .zc,.ghead .zc{vertical-align:middle}
 @media (max-width:900px){.grid5{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:640px){.grid5{grid-template-columns:repeat(2,minmax(0,1fr))}.wheel{width:210px;height:210px}.cabin{transform:rotate(var(--a)) translateY(-104px) rotate(calc(-1*var(--a) - var(--r,0deg)));width:58px;font-size:20px}.hub{width:76px;height:76px;margin:-38px 0 0 -38px;font-size:50px}}
+
+.g>img{position:absolute;inset:0;width:100%;height:100%;display:block}
