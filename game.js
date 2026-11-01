@@ -60,9 +60,14 @@ function bp(r) {
 }
 const plain = s => s.replace(/\[[^\]]*\]/g, '').replace(/[{}]/g, '');
 
+// 有 Kore 配音就播音檔，還沒配到的句子先用裝置語音
+let player = null;
 function speak(t) {
   try {
     speechSynthesis.cancel();
+    if (player) { player.pause(); player = null; }
+    const k = typeof AUDIO !== 'undefined' && AUDIO[plain(t)];
+    if (k) { player = new Audio('audio/' + k + '.mp3'); player.play().catch(() => {}); return; }
     const u = new SpeechSynthesisUtterance(plain(t));
     u.lang = 'zh-TW'; u.rate = .85;
     const v = speechSynthesis.getVoices().find(x => /zh[-_]TW/i.test(x.lang));
