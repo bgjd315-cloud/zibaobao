@@ -213,7 +213,6 @@ function signs(list) {
     return `<button class="sign s${st}" aria-label="${d.c}" data-say="${d.c}"><span class="g">${st || !canCombine(d) ? `<span>${d.c}</span>` : `<span style="clip-path:${clipPart(d.c, d.t, giveOf(d))}">${d.c}</span>`}</span></button>`;
   }).join('');
 }
-const chipTitle = (n, t) => `第${n}課`;
 function land(u) {
   const L = OPEN.find(l => l.unit === u);
   setBg(L.img);
@@ -231,9 +230,38 @@ function land(u) {
       <button class="fac" data-go="train/${u}"><img src="assets/bg/設施_對號小火車.webp" alt="">${z('對號小火車')}</button>
       <button class="fac" data-go="detect/${u}"><img src="assets/bg/設施_偵探小屋.webp" alt="">${z('偵探小屋')}</button>
     </div></div>
+    ${u === 5 ? scanPanel() : ''}
     <div class="panel">${groups}</div>
     <div class="row"><button class="btn gray" data-go="dict">${z('詞語寶典')}</button></div>`;
   bind();
+  const sb = document.getElementById('scan');
+  if (sb) sb.onclick = startScan;
+}
+// 拍手草原：一年級的字先掃描，寫得出來就過關，寫不出來才進每日複習
+const G1 = BANK.filter(d => d.lesson > 100);
+const scanLeft = () => G1.filter(d => !(S.chars[d.c] && S.chars[d.c].scanned)).sort((a, b) => b.lesson - a.lesson);
+function scanPanel() {
+  const left = scanLeft().length;
+  return `<div class="panel row" style="justify-content:space-between">
+    <div style="font-size:24px">${z('一年級的字，寫得出來就過關！')} <b style="font-family:var(--sans)">${G1.length - left}／${G1.length}</b></div>
+    ${left ? `<button class="btn" id="scan" style="font-size:26px">${z('草原大掃描')}</button>` : ''}</div>`;
+}
+function startScan() {
+  flow = { q: scanLeft().slice(0, 10).map(d => ({ t: 'board', c: d.c })), i: 0, back: 'land/5', scan: { ok: [], bad: [] } };
+  nextStep();
+}
+function scanDone(res) {
+  setBg('園區_拍手草原');
+  if (!res.bad.length) { confetti(); beep(true); }
+  const t = res.bad.length ? '這些字明天再練一次就好！' : '全部都寫得出來，太棒了！';
+  app.innerHTML = `${topbar('land/5', z('草原大掃描'))}<div class="panel center">
+    <img src="assets/cut/半半_開心.webp" alt="" style="width:130px">
+    <div class="say">${z(t)}</div>
+    ${res.bad.length ? `<div class="words" style="justify-content:center;margin:8px 0">${res.bad.map(c => `<button class="wordcard" data-say="${c}">${c}</button>`).join('')}</div>` : ''}
+    <div class="row" style="margin-top:10px">${scanLeft().length ? `<button class="btn" id="again">${z('下一個')}</button>` : ''}<button class="btn gray" data-go="land/5">${z('回去')}</button></div></div>`;
+  bind();
+  const a = document.getElementById('again');
+  if (a) a.onclick = startScan;
 }
 
 // ---------- 今日任務與自由練習的流程 ----------
@@ -241,11 +269,13 @@ let flow = null;
 // 順序：考卷錯字 → 家長設定的目前課次 → 二上其他課
 function freshOrder() {
   const score = d => (HAND[d.c] ? 0 : d.lesson === S.focus ? 1 : 2);
-  return BANK.slice().sort((a, b) => score(a) - score(b) || a.lesson - b.lesson);
+  return BANK.filter(d => d.lesson < 100).sort((a, b) => score(a) - score(b) || a.lesson - b.lesson);
 }
 function buildTask() {
   const t = today(), q = [];
-  BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined && S.chars[d.c].due && S.chars[d.c].due <= t).forEach(d => q.push({ t: 'board', c: d.c }));
+  // 複習一天最多 12 個，最久沒練的先來，避免累積後一次太長
+  BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined && S.chars[d.c].due && S.chars[d.c].due <= t)
+    .sort((a, b) => S.chars[a.c].due < S.chars[b.c].due ? -1 : 1).slice(0, 12).forEach(d => q.push({ t: 'board', c: d.c }));
   const fresh = freshOrder().filter(d => !(S.chars[d.c] && S.chars[d.c].combined)).slice(0, 5);
   fresh.forEach(d => { if (canCombine(d)) q.push({ t: 'combine', c: d.c }); q.push({ t: 'board', c: d.c }); });
   if (q.length) {
@@ -260,6 +290,7 @@ function nextStep() {
   if (!flow || flow.i >= flow.q.length) {
     const f = flow;
     flow = null;
+    if (f && f.scan) return scanDone(f.scan);
     if (f && f.task) { const t = today(); if (!S.days.includes(t)) S.days.push(t); save(); return finish(); }
     location.hash = f && f.back || 'map'; return;
   }
@@ -373,6 +404,13 @@ function board(c) {
 function rate(c, r, how) {
   const t = today();
   r[how]++;
+  if (flow && flow.scan) {
+    r.scanned = true; r.combined = true;
+    if (how === 'ok') { r.caught = true; r.box = 2; r.lastOk = t; r.due = addDays(t, 7); S.stars++; flow.scan.ok.push(c); }
+    else { r.box = 0; r.lastOk = null; r.due = addDays(t, 1); flow.scan.bad.push(c); }
+    save();
+    return nextStep();
+  }
   let caughtNow = false;
   if (how === 'ok') {
     if (!r.lastOk) r.box = 1;
@@ -491,7 +529,7 @@ function dict() {
 // ---------- 對號小火車 ----------
 function train(u) {
   setBg('設施_對號小火車');
-  const pool = PASSAGES.filter(p => p.unit === u);
+  const pool = u === 5 ? PASSAGES : PASSAGES.filter(p => p.unit === u);
   const next = pool.find(p => (S.trains[p.id] || 0) < 2) || shuffle(pool)[0];
   runTrain(next, Math.min(S.trains[next.id] || 0, 1), u);
 }
@@ -609,10 +647,10 @@ function parent() {
   const name = { 0: '未練', 1: '練習中', 2: '已收服' };
   const seen = BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined);
   app.innerHTML = `<div class="panel" style="font-family:var(--sans)"><h2>家長頁</h2>
-    <p>完成任務 ${S.days.length} 天；已練 ${seen.length}／${BANK.length} 字；已收服 ${BANK.filter(d => stateOf(d.c) === 2).length} 字；詞語寶典 ${Object.keys(S.words).length} 個；小火車跳格 ${S.shifts} 次。</p>
+    <p>完成任務 ${S.days.length} 天；已練 ${seen.length}／${BANK.length} 字；已收服 ${BANK.filter(d => stateOf(d.c) === 2).length} 字；一年級掃描 ${G1.length - scanLeft().length}／${G1.length} 字，要補 ${G1.filter(d => S.chars[d.c] && S.chars[d.c].scanned && !S.chars[d.c].caught).map(d => d.c).join('') || '無'}；詞語寶典 ${Object.keys(S.words).length} 個；小火車跳格 ${S.shifts} 次。</p>
     <p><label>目前學校上到：<select id="fc"><option value="0">不指定</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${S.focus === i + 1 ? 'selected' : ''}>第 ${i + 1} 課</option>`).join('')}</select></label>（考卷錯字之後，先練這一課）</p>
     <div class="tablewrap"><table><tr><th>字</th><th>課</th><th>狀態</th><th>下次複習</th><th>全對</th><th>差一點</th><th>忘了</th><th>拼錯部件</th></tr>
-    ${seen.map(d => { const r = S.chars[d.c]; return `<tr><td style="font-family:var(--kai);font-size:26px">${d.c}${HAND[d.c] ? '＊' : ''}</td><td>${d.lesson}</td><td>${name[stateOf(d.c)]}</td><td>${r.due || '—'}</td><td>${r.ok}</td><td>${r.near}</td><td>${r.forget}</td><td>${r.wrongParts}</td></tr>`; }).join('') || '<tr><td colspan="8">還沒有練習紀錄</td></tr>'}
+    ${seen.map(d => { const r = S.chars[d.c]; return `<tr><td style="font-family:var(--kai);font-size:26px">${d.c}${HAND[d.c] ? '＊' : ''}</td><td>${d.lesson > 200 ? '一下' + (d.lesson - 200) : d.lesson > 100 ? '一上' + (d.lesson - 100) : '二上' + d.lesson}</td><td>${name[stateOf(d.c)]}</td><td>${r.due || '—'}</td><td>${r.ok}</td><td>${r.near}</td><td>${r.forget}</td><td>${r.wrongParts}</td></tr>`; }).join('') || '<tr><td colspan="8">還沒有練習紀錄</td></tr>'}
     </table></div><p>＊是考卷錯字。</p>
     <div class="row" style="margin-top:12px"><button class="btn gray" data-go="">回遊戲</button><button class="btn red" id="rs">清除所有進度</button></div></div>`;
   bind();
