@@ -29,23 +29,51 @@ const esc = s => s.replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&
 const isHan = ch => /[一-鿿]/.test(ch);
 // 把文字轉成帶直排注音的字；字[注音] 指定讀音；blank(字, 注音) 決定 {字} 怎麼顯示
 function z(s, blank) {
-  let out = '';
+  // 先拆成字：{ch, r 讀音, b 是否挖空, m 是否手動或詞表指定}
+  const t = [];
   for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (ch === '{') {
-      const c = s[i + 1]; i += 2;
-      let r = ZY[c] || ZYB[c];
-      if (s[i + 1] === '[') { const e = s.indexOf(']', i); r = s.slice(i + 2, e); i = e; }
-      out += blank ? blank(c, r) : zc(c, r);
-      continue;
-    }
-    if (isHan(ch)) {
-      let r = ZY[ch] || ZYB[ch];
-      if (s[i + 1] === '[') { const e = s.indexOf(']', i); r = s.slice(i + 2, e); i = e; }
-      out += zc(ch, r);
-    } else out += esc(ch);
+    let ch = s[i], b = false;
+    if (ch === '{') { ch = s[i + 1]; i += 2; b = true; }
+    if (!isHan(ch)) { t.push({ ch }); continue; }
+    const k = { ch, h: true, b, r: ZY[ch] || ZYB[ch], m: false };
+    if (s[i + 1] === '[') { const e = s.indexOf(']', i); k.r = s.slice(i + 2, e); k.m = true; i = e; }
+    t.push(k);
   }
-  return out;
+  // 介面詞讀音：沒有手動標音的連續字查 ZW（最長的詞優先）
+  if (typeof ZW !== 'undefined') for (let i = 0; i < t.length; i++) {
+    for (let n = 4; n >= 2; n--) {
+      const seg = t.slice(i, i + n);
+      if (seg.length < n || seg.some(x => !x.h || x.m)) continue;
+      const rs = ZW[seg.map(x => x.ch).join('')];
+      if (!rs) continue;
+      rs.split(' ').forEach((r, j) => { seg[j].r = r; seg[j].m = true; });
+      i += n - 1; break;
+    }
+  }
+  // 沒有標音的「一」「不」依下一字變調；序數（第一、星期一、一上、一下、一年級）與「想一想」不變
+  const base = k => k && k.r && k.r[0] === '˙' ? (ZYB[k.ch] || k.r) : (k && k.r) || '';
+  t.forEach((k, i) => {
+    if (!k.h || k.m || (k.ch !== '一' && k.ch !== '不')) return;
+    const p = t[i - 1], n = t[i + 1], nr = base(n);
+    if (!n || !n.h || !nr) return;
+    if (k.ch === '不') { if (nr.endsWith('ˋ')) k.r = 'ㄅㄨˊ'; return; }
+    const head = !p || !p.h;
+    if ((p && '第期'.includes(p.ch)) || n.ch === '年' || (head && '上下'.includes(n.ch))) return;
+    if (p && p.h && p.ch === n.ch && !(t[i - 2] && t[i - 2].ch === '一')) return;
+    k.r = nr.endsWith('ˋ') ? 'ㄧˊ' : 'ㄧˋ';
+  });
+  // 輸出；標點和前一個字包在一起，避免換行時標點跑到行首
+  const out = [];
+  t.forEach(k => {
+    if (!k.h) {
+      const last = out[out.length - 1];
+      if (/[，。！？、：；」）』…]/.test(k.ch) && last && last.han) out[out.length - 1] = { html: `<span class="nob">${last.html}${esc(k.ch)}</span>` };
+      else out.push({ html: esc(k.ch) });
+      return;
+    }
+    out.push({ html: k.b && blank ? blank(k.ch, k.r) : zc(k.ch, k.r), han: true });
+  });
+  return out.map(x => x.html).join('');
 }
 function zc(c, r) {
   if (!r) { window.__miss.add(c); return c; }
@@ -207,7 +235,9 @@ function optionsFor(d) {
   const b = shuffle(same.filter(x => !a.includes(x)));
   return [d.c, ...a.concat(b).slice(0, 2).map(x => x.c)];
 }
-const tipOf = d => HAND[d.c] ? HAND[d.c].tip : `部首是「${d.rad}」。`;
+// 部首字單獨唸時用辭典讀音（ZYB），不用介面表 ZY 的詞中讀音（例如 子 不是 ˙ㄗ）；小二看不懂的部首加上通俗名稱
+const radZ = r => ZYB[r] ? `${r}[${ZYB[r]}]` : r;
+const tipOf = d => HAND[d.c] ? HAND[d.c].tip : `部首是「${radZ(d.rad)}」${RADNAME[d.rad] ? `，也就是${RADNAME[d.rad]}` : ''}。`;
 const picOf = d => (HAND[d.c] && HAND[d.c].pic) || PICS[d.c] || '';
 const picHtml = d => picOf(d) ? `<img class="pic" src="assets/cut/${picOf(d)}.webp" alt="">` : `<img class="pic" src="assets/cut/字寶寶_糖果.webp" alt="">`;
 const fontsReady = cs => Promise.all(cs.map(c => document.fonts.load('100px ' + FONT, c))).catch(() => {});
@@ -218,8 +248,10 @@ const topbar = (back, title) => `
     <div class="grow"><h2 class="tag">${title || ''}</h2></div>
     <div class="stars"><img src="assets/cut/獎勵_金星.webp" alt="星星">${S.stars}</div>
   </div>`;
+// 網址相同時設定 location.hash 不會觸發 hashchange，要自己呼叫 route()
+const go = h => (location.hash.replace('#', '') === h ? route() : (location.hash = h));
 function bind() {
-  app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { flow = null; location.hash = b.dataset.go; });
+  app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { flow = null; go(b.dataset.go); });
   app.querySelectorAll('[data-say]').forEach(b => b.onclick = () => speak(b.dataset.say));
 }
 const spBtn = t => `<button class="sp" aria-label="朗讀" data-say="${esc(plain(t))}">🔊</button>`;
@@ -234,7 +266,7 @@ function home() {
   setBg('封面');
   app.innerHTML = `<div class="title">${z('字寶寶樂園')}</div>
     <div class="bottom row"><button class="btn" id="go" style="font-size:34px;padding:10px 40px">${z('開始')}</button></div>`;
-  document.getElementById('go').onclick = () => { if (S.look) location.hash = 'map'; else story(0); };
+  document.getElementById('go').onclick = () => { if (S.look) go('map'); else story(0); };
 }
 function story(i) {
   if (i >= STORY.length) return pick();
@@ -251,7 +283,7 @@ function pick() {
   const L = [['園長_女孩', '女孩'], ['園長_男孩', '男孩'], ['園長_小狐狸', '小狐狸']];
   app.innerHTML = `<div class="panel" style="margin-top:auto;margin-bottom:auto"><h2 class="center">${z('選一個小園長[ㄓㄤˇ]')}</h2>
     <div class="avatars">${L.map(([a, n]) => `<button data-a="${a}"><img src="assets/cut/${a}.webp" alt="${n}"><div style="font-size:24px">${z(n)}</div></button>`).join('')}</div></div>`;
-  app.querySelectorAll('[data-a]').forEach(b => b.onclick = () => { S.look = b.dataset.a; save(); location.hash = 'map'; });
+  app.querySelectorAll('[data-a]').forEach(b => b.onclick = () => { S.look = b.dataset.a; save(); go('map'); });
 }
 
 // ---------- 地圖、園區 ----------
@@ -337,10 +369,13 @@ function freshOrder() {
 }
 function buildTask() {
   const t = today(), q = [];
+  if (S.days.includes(t)) return q;   // 今天的任務已經做完
   // 複習一天最多 12 個，最久沒練的先來，避免累積後一次太長
-  BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined && S.chars[d.c].due && S.chars[d.c].due <= t)
-    .sort((a, b) => S.chars[a.c].due < S.chars[b.c].due ? -1 : 1).slice(0, 12).forEach(d => q.push({ t: 'board', c: d.c }));
-  const fresh = freshOrder().filter(d => !(S.chars[d.c] && S.chars[d.c].combined)).slice(0, 5);
+  const due = BANK.filter(d => S.chars[d.c] && S.chars[d.c].combined && S.chars[d.c].due && S.chars[d.c].due <= t)
+    .sort((a, b) => S.chars[a.c].due < S.chars[b.c].due ? -1 : 1);
+  due.slice(0, 12).forEach(d => q.push({ t: 'board', c: d.c }));
+  // 過期沒複習的字積太多（超過 20 個）就先暫停新字，讓複習追上來
+  const fresh = due.length > 20 ? [] : freshOrder().filter(d => !(S.chars[d.c] && S.chars[d.c].combined)).slice(0, 5);
   fresh.forEach(d => { if (canCombine(d)) q.push({ t: 'combine', c: d.c }); q.push({ t: 'board', c: d.c }); });
   if (q.length) {
     const u = landOf(fresh[0] ? fresh[0].c : q[0].c).unit;
@@ -356,7 +391,7 @@ function nextStep() {
     flow = null;
     if (f && f.scan) return scanDone(f.scan);
     if (f && f.task) { const t = today(); if (!S.days.includes(t)) S.days.push(t); save(); return finish(); }
-    location.hash = f && f.back || 'map'; return;
+    go(f && f.back || 'map'); return;
   }
   const s = flow.q[flow.i++];
   if (s.t === 'combine') combine(s.c);
@@ -428,13 +463,15 @@ async function combine(c) {
 }
 
 // ---------- 魔法黑板 ----------
+// 同一句裡又出現要寫的字（叔叔、星星、瓶蓋蓋好）就一起挖掉，避免照抄
+const hideSame = (say, c) => say.split('{' + c + '}').map(part => part.split(c + '[').join('{' + c + '}[')).join('{' + c + '}');
 function board(c) {
   const d = byC[c], r = rec(c);
   if (!r.combined) { r.combined = true; if (!r.due) r.due = today(); }
   setBg('設施_魔法黑板');
   app.innerHTML = `${topbar(backOf(), z('魔法黑板'))}
     <div class="panel">
-      <div class="row say" id="s">${z(d.say, (x, y) => `<span class="blank">${bp(y)}</span>`)} ${spBtn(d.say)}</div>
+      <div class="row say" id="s">${z(hideSame(d.say, c), (x, y) => `<span class="blank" data-zy="${y || ''}">${bp(y)}</span>`)} ${spBtn(d.say)}</div>
       <div class="work">
         <div class="boardwrap" id="bw"><canvas id="pad"></canvas></div>
         ${picHtml(d)}
@@ -447,10 +484,17 @@ function board(c) {
     </div>`;
   bind();
   speak(d.say);
-  const cv = document.getElementById('pad'), box = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
-  cv.width = box.width * dpr; cv.height = box.height * dpr;
-  const g = cv.getContext('2d');
-  g.scale(dpr, dpr); g.lineCap = g.lineJoin = 'round'; g.strokeStyle = '#fff'; g.lineWidth = Math.max(6, box.width / 45);
+  const cv = document.getElementById('pad'), g = cv.getContext('2d');
+  let box;
+  // 畫布大小跟著版面（平板轉向時重設，不然筆跡會偏）
+  function fit() {
+    const b = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+    if (box && Math.abs(b.width - box.width) < 1 && Math.abs(b.height - box.height) < 1) return;
+    box = b; cv.width = b.width * dpr; cv.height = b.height * dpr;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.lineCap = g.lineJoin = 'round'; g.strokeStyle = '#fff'; g.lineWidth = Math.max(6, b.width / 45);
+  }
+  fit();
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => { if (cv.isConnected) fit(); }).observe(cv);
   let on = false, lx, ly;
   const pos = e => { const b = cv.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
   cv.onpointerdown = e => { on = true; cv.setPointerCapture(e.pointerId); [lx, ly] = pos(e); g.beginPath(); g.arc(lx, ly, g.lineWidth / 2, 0, 7); g.fillStyle = '#fff'; g.fill(); };
@@ -459,7 +503,7 @@ function board(c) {
   document.getElementById('cl').onclick = () => g.clearRect(0, 0, box.width, box.height);
   document.getElementById('mg').onclick = () => {
     document.getElementById('bw').insertAdjacentHTML('beforeend', `<div class="ghost">${c}</div>`);
-    document.getElementById('s').querySelector('.blank').outerHTML = `<span class="blank found">${c}</span>`;
+    showBlanks(true);
     document.getElementById('m').innerHTML = z(tipOf(d)) + '<br>' + z('自己比一比，寫得對不對？');
     document.getElementById('a').innerHTML = `
       <button class="btn mint" data-r="ok">${z('全對')}</button>
@@ -472,11 +516,14 @@ function board(c) {
   // 忘了：先看答案，記住後遮起來再寫一次，寫對才換下一個字（紀錄仍算忘了，明天再複習）
   const msg = h => document.getElementById('m').innerHTML = h, act = h => document.getElementById('a').innerHTML = h;
   const clearPad = () => g.clearRect(0, 0, box.width, box.height);
+  // 挖空處：顯示答案，或還原成例句裡的注音（不用 d.zy，例句讀音可能和單字讀音不同）
+  const showBlanks = on => document.querySelectorAll('#s .blank').forEach(b => {
+    if (on) { b.className = 'blank found'; b.textContent = c; } else { b.className = 'blank'; b.innerHTML = bp(b.dataset.zy); }
+  });
   function study() {
     clearPad();
     if (!document.querySelector('.ghost')) document.getElementById('bw').insertAdjacentHTML('beforeend', `<div class="ghost">${c}</div>`);
-    const bl = document.querySelector('#s .blank');
-    bl.className = 'blank found'; bl.textContent = c;
+    showBlanks(true);
     msg(z('看清楚答案，記住了再寫一次。') + '<br>' + z(tipOf(d)));
     act(`<button class="btn" id="memo">${z('我記住了')}</button>`);
     speak(d.say);
@@ -485,15 +532,13 @@ function board(c) {
   function again() {
     clearPad();
     document.querySelector('.ghost').remove();
-    const bl = document.querySelector('#s .blank');
-    bl.className = 'blank'; bl.innerHTML = bp(d.zy);
+    showBlanks(false);
     msg(z('不看答案，再寫一次！'));
     act(`<button class="btn gray" id="cl2">${z('清除')}</button><button class="btn" id="mg2">${z('變魔法')}</button>`);
     document.getElementById('cl2').onclick = clearPad;
     document.getElementById('mg2').onclick = () => {
       document.getElementById('bw').insertAdjacentHTML('beforeend', `<div class="ghost">${c}</div>`);
-      const b2 = document.querySelector('#s .blank');
-      b2.className = 'blank found'; b2.textContent = c;
+      showBlanks(true);
       msg(z('自己比一比，寫得對不對？'));
       act(`<button class="btn mint" id="ok2">${z('寫對了')}</button><button class="btn gray" id="re2">${z('再練一次')}</button>`);
       document.getElementById('ok2').onclick = () => { beep(true); nextStep(); };
@@ -543,6 +588,9 @@ function rate(c, r, how, stay) {
 const wordsOf = d => d.words.map(w => ({ text: plain(w), marked: w })).filter(w => w.text.length === 2 && w.text.includes(d.c));
 const ALLWORDS = BANK.flatMap(d => wordsOf(d).map(w => ({ ...w, c: d.c })));
 const uniq = a => [...new Set(a)];
+const WORDSET = new Set(BANK.flatMap(d => d.words.map(plain)).concat(BANK.map(d => plain(d.say))).flatMap(t => {
+  const out = []; for (let i = 0; i + 1 < t.length; i++) out.push(t.slice(i, i + 2)); return out;
+}).filter(x => /^[一-鿿]{2}$/.test(x)).concat(BANK.flatMap(d => d.words.map(plain))));
 function wheel(u, center) {
   const L = OPEN.find(l => l.unit === u);
   const pool = BANK.filter(d => L.lessons.includes(d.lesson) && wordsOf(d).length >= 2);
@@ -551,9 +599,11 @@ function wheel(u, center) {
   setBg('設施_詞語摩天輪');
   let idx = 0;
   const others = uniq(ALLWORDS.filter(w => !w.text.includes(d.c)).map(w => w.text[0]));
+  // 干擾字不能和中心字組成題庫裡任何一個詞（例如「一」配「點」也是詞語）
+  const okWith = x => !WORDSET.has(d.c + x) && !WORDSET.has(x + d.c);
   function tilesFor(w) {
     const need = w.text.replace(d.c, '');
-    return shuffle([need, ...shuffle(others.filter(x => x !== need)).slice(0, 5)]);
+    return shuffle([need, ...shuffle(others.filter(x => x !== need && okWith(x))).slice(0, 5)]);
   }
   function render(msg) {
     const w = list[idx], need = w.text.replace(d.c, '');
@@ -572,10 +622,10 @@ function wheel(u, center) {
         <div class="tiles">${tilesFor(w).map(t => `<button class="tile" data-t="${t}">${t}</button>`).join('')}</div>
       </div>`;
     bind();
-    speak(w.text);
+    // 先不唸出詞語，答對了才唸，孩子要自己想
     app.querySelectorAll('.tile').forEach(b => b.onclick = () => {
       if (b.dataset.t === need) {
-        beep(true); S.words[w.text] = w.marked; S.stars++; save();
+        beep(true); speak(w.text); S.words[w.text] = w.marked; S.stars++; save();
         idx++;
         if (idx >= list.length) return done();
         render(z('配對成功！再找一個！'));

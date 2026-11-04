@@ -153,3 +153,11 @@ hr{border:none;border-top:2px dashed var(--line);margin:10px 0}
 @media (max-width:640px){.grid5{grid-template-columns:repeat(2,minmax(0,1fr))}.wheel{width:210px;height:210px}.cabin{transform:rotate(var(--a)) translateY(-104px) rotate(calc(-1*var(--a) - var(--r,0deg)));width:58px;font-size:20px}.hub{width:76px;height:76px;margin:-38px 0 0 -38px;font-size:50px}}
 
 .g>img{position:absolute;inset:0;width:100%;height:100%;display:block}
+/* 2026-11-04 依審查報告：標點黏著前一字、手機地圖改兩欄清單、進度數字不斷行 */
+.nob{display:inline-flex;align-items:center;white-space:nowrap}
+.panel b{white-space:nowrap}
+@media (max-width:640px){
+  .mapwrap{aspect-ratio:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px;background-size:cover}
+  .pin{position:static;transform:none;white-space:normal;text-align:center;justify-content:center;display:flex;flex-wrap:wrap;align-items:center;padding:6px;min-height:56px;font-size:18px}
+  @keyframes pulse{50%{transform:scale(1.05)}}
+}
